@@ -167,24 +167,32 @@ def sync_token_to_chatgpt2api(email: str, access_token: str):
     import json
     import os
 
-    api_url = "http://localhost:8000/api/accounts"
+    api_urls = [
+        "http://localhost:8000/api/accounts",
+        "http://34.55.229.129:3000/api/accounts"
+    ]
     auth_key = "chatgpt2api"
     json_path = "/Users/linkunkun/Documents/TempTry/chatgpt2api/data/accounts.json"
 
     # 1. 尝试 API 导入
-    try:
-        import httpx
-        with httpx.Client(timeout=3) as client:
-            r = client.post(
-                api_url,
-                headers={"Authorization": auth_key},
-                json={"tokens": [access_token]}
-            )
-            if r.status_code in (200, 201):
-                print(f"[{cfg.ts()}] [Sync] 成功通过 API 将账号 {email} 同步到 chatgpt2api 项目")
-                return True
-    except Exception:
-        pass
+    sync_success = False
+    import httpx
+    for url in api_urls:
+        try:
+            with httpx.Client(timeout=3) as client:
+                r = client.post(
+                    url,
+                    headers={"Authorization": f"Bearer {auth_key}"},
+                    json={"tokens": [access_token]}
+                )
+                if r.status_code in (200, 201):
+                    print(f"[{cfg.ts()}] [Sync] 成功通过 API ({url}) 将账号 {email} 同步到 chatgpt2api 项目")
+                    sync_success = True
+        except Exception:
+            pass
+
+    if sync_success:
+        return True
 
     # 2. 尝试文件直接写入
     if os.path.exists(os.path.dirname(json_path)):
