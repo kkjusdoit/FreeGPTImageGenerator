@@ -11,7 +11,7 @@ email_api_mode: "cloudflare_temp_email"
 # [基础配置: cloudflare_temp_email / imap / cloudmail 共享]
 # 你的域名 (支持逗号分隔多域名随机轮换) 如果只有一个域名就只填一个域名
 
-mail_domains: "domain1.com,domain2.xyz,domain3.net"
+mail_domains: "mail.fzd-fans.com"
 
 #二级域名开关
 enable_sub_domains: false
@@ -30,11 +30,11 @@ ai_service:
 
 
 # 你的临时邮箱 后端API 基础地址 结尾不要/，IMAP和freemail/cloudmail/mail_curl不需要配置此项。注意：用浏览器打开后端api验证是否可访问
-gptmail_base: "https://your-domain.com" #是后端访问链接，不是前端访问链接，正常情况浏览器打开访问会显示ok就是对的
+gptmail_base: "https://emailbot.kkjusdoit.workers.dev"
 
 # [模式 "cloudflare_temp_email" 专属配置]
 # 你的临时邮箱管理员密码
-admin_auth: ""
+admin_auth: "fzd-admin-2026"
 
 # [模式 "imap" 专属配置] (CF Catch-all 转发接收端)
 imap:
@@ -55,9 +55,6 @@ local_microsoft:
   master_email: ""
   client_id: ""
   refresh_token: ""
-  suffix_mode: "fixed"
-  suffix_len_min: 8
-  suffix_len_max: 8
   pool_fission: false
 
 # [模式 "freemail" 专属]
@@ -110,20 +107,9 @@ tmailor:
 # [FviaInboxes 配置]
 fvia:
   token: ''
-
-# Gmail OAuth 裂变配置
-gmail_oauth_mode:
-  master_email: ""           # Gmail 主号 (需已完成 credentials.json 授权)
-  fission_enable: false      # 是否开启 Gmail 裂变
-  fission_mode: "suffix"     # 裂变模式: suffix、dot
-  # 后缀生成配置 (当 fission_mode 为 suffix 时生效)
-  suffix_mode: "mystic"      # fixed (固定长度) / range (随机范围) / mystic (高拟真词库)
-  suffix_len_min: 8
-  suffix_len_max: 12
-
 # [代理配置]
 # openai注册时代理地址，例子：http://127.0.0.1:7897。如果是国外服务器此项可以不填
-default_proxy: ""
+default_proxy: "http://127.0.0.1:7890"
 
 # 是否开启注册多线程并发 (true/false)
 enable_multi_thread_reg: false    
@@ -135,23 +121,19 @@ reg_threads: 10
 # Clash 节点智能轮换（本地使用clash软件）
 clash_proxy_pool:
   # 【开关】是否在每次注册前自动通过 Clash 切换节点
-  enable: false
+  enable: true
   # 【核心开关】true=服务器10容器独立推算模式；false=本地单机/单容器模式
   pool_mode: false
   # Clash 的外部控制 API 地址 (注意端口通常是 9090 或 9097)
-  api_url: "http://127.0.0.1:9097"
+  api_url: "http://127.0.0.1:64006"
   #true为测速优选，false为随机盲抽。提示：如果A节点一直是最低延迟那么可能每次都是A节点。
   fastest_mode: false
-  # 目标集群实例数量
-  cluster_count: 5
-  # 订阅链接存储
-  sub_url: ""
   # 你机场包含所有节点的策略组名称，带有 Emoji 也没关系
-  group_name: "节点选择"
+  group_name: "Proxies"
   # Clash 的外部控制鉴权秘钥 (Secret)
-  secret: "set-your-secret"
+  secret: "pGH-pRo-5hE-ys5"
   # 用于连接外网测活的本地代理端口 (通常与上方的 default_proxy 保持一致)
-  test_proxy_url: ""
+  test_proxy_url: "http://127.0.0.1:7890"
   # 节点过滤黑名单：严格剔除包含以下关键词的节点 (如港台地区、说明性节点)
   blacklist:
     - "自动"
@@ -172,23 +154,6 @@ clash_proxy_pool:
     - "CN"
     - "China"
     - "回国"
-
-raw_proxy_pool:
-  # 独立于 Clash 的批量代理池；启用后优先使用这里的代理列表
-  # 支持 HTTP / HTTPS / SOCKS5 显式协议；未写协议时默认按 socks5h 解析
-  enable: false
-  proxy_list:
-    # 支持以下格式：
-    # - http://user:pass@host:8080
-    # - https://user:pass@host:8443
-    # - socks5://user:pass@host:1080
-    # - socks5h://user:pass@host:1080
-    # - host:port
-    # - host:port:user:pass
-    # - user:pass@host:port
-    - "http://user:pass@127.0.0.1:8080"
-    - "socks5://user:pass@127.0.0.1:1080"
-    - "127.0.0.1:1081:user:pass"
 
 warp_proxy_list:
   - "http://127.0.0.1:41001"
@@ -217,20 +182,17 @@ enable_email_masking: true
 login_delay_min: 20
 login_delay_max: 45
 
-#常规模式是否保存仅注册账号，用于后续手动登录或者其他作用
-retain_reg_only: false
-
 # CPA 模式专属配置
 cpa_mode:
   # 【开关】true 开启巡检补货上传，false 则只进行常规无限注册
-  enable: false
+  enable: true
   auto_check: true
   # 【开关】开启 CPA 补货时，是否同时将账号 Token 备份到本地，默认true为备份
   save_to_local: true
   # CPA的访问地址
-  api_url: "http://your-domain.com:8317"
+  api_url: "http://127.0.0.1:8317"
   # CPA登陆密码
-  api_token: "xxxx"
+  api_token: "test123"
   # 仓库存量低于此值时触发补货
   min_accounts_threshold: 30
   # 每次触发补货注册的数量
@@ -248,8 +210,6 @@ cpa_mode:
   check_interval_minutes: 60
   #并发线程数配置，默认 10 线程
   threads: 10
-  #是否保存仅注册账号，用于后续手动登录或者其他作用
-  retain_reg_only: false
 
 # SUB2APIA配置 参数含义跟CPA相同
 sub2api_mode:
@@ -271,10 +231,6 @@ sub2api_mode:
   account_rate_multiplier: 1.0
   account_group_ids: ""
   enable_ws_mode: true
-  test_model: "gpt-5.2"
-  default_proxy: ""
-  #是否保存仅注册账号，用于后续手动登录或者其他作用
-  retain_reg_only: false
 
 hero_sms:
   enabled: false
@@ -283,22 +239,6 @@ hero_sms:
   country: 50
   service: dr
   auto_pick_country: false
-  verify_on_register: false
-  reuse_phone: true
-  max_price: 0.08
-  min_price: 0.05
-  min_balance: 1
-  max_tries: 3
-  poll_timeout_sec: 120
-
-smsbower:
-  enabled: false
-  api_key:
-  base_url: https://smsbower.page/stubs/handler_api.php
-  country: 0
-  service: dr
-  auto_pick_country: false
-  verify_on_register: false
   reuse_phone: true
   max_price: 0.08
   min_balance: 1
@@ -321,27 +261,14 @@ tg_bot:
   mask_email: false
   mask_password: false
 
-# 数据库适配，默认为本地sqlite
-database:
-  type: "sqlite"  # 可选值: "sqlite" 或 "mysql"
-  mysql:
-    host: "127.0.0.1"
-    port: 3306
-    user: "root"
-    password: ""
-    db_name: "wenfxl_manager"
-
 # WEB端密码
 web_password: admin
 #CF账号
 cf_api_email: 
 #CF KEY
 cf_api_key:
-max_log_lines: "500"
+
 #集群总控
 cluster_node_name: "NODE-1"
 cluster_master_url: ""
 cluster_secret: "wenfxl666"
-
-# 是否放弃强行变道走无密码OTP
-disable_forced_takeover: true

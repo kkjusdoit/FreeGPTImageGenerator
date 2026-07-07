@@ -46,7 +46,8 @@ class ProxyIMAP4_SSL(imaplib.IMAP4_SSL):
         return sock
 
 luckmail_lock = threading.Lock()
-
+empty_retry_count = 0
+empty_lock = threading.Lock()
 _CM_TOKEN_CACHE: Optional[str] = None
 
 _thread_data = threading.local()
@@ -446,10 +447,26 @@ def get_email_and_token(proxies: Any = None) -> tuple:
         ms_service = LocalMicrosoftService(proxies=mail_proxies)
 
         mailbox_info = ms_service.get_unused_mailbox()
+
         if not mailbox_info:
-            cfg.POOL_EXHAUSTED = True
-            print(f"[{cfg.ts()}] [WARNING] 微软邮箱库已耗尽，请前往前端导入更多账号。")
+            global empty_retry_count
+            with empty_lock:
+                empty_retry_count += 1
+                if empty_retry_count >= cfg.REG_THREADS:
+                    cfg.POOL_EXHAUSTED = True
+                    print(f"[{cfg.ts()}] [WARNING] {cfg.REG_THREADS} 个线程全都没拿到邮箱，微软邮箱库已耗尽，程序将自动停止，请前往微软邮箱库导入更多账号！")
+                else:
+                    print(f"[{cfg.ts()}] [WARNING] 当前线程未拿到邮箱 (失败线程/总线程: {empty_retry_count}/{cfg.REG_THREADS})，将跳过等待下一轮。")
             return None, None
+
+        with empty_lock:
+            empty_retry_count = 0
+
+
+        # if not mailbox_info:
+        #     # cfg.POOL_EXHAUSTED = True
+        #     print(f"[{cfg.ts()}] [WARNING] 微软邮箱库已耗尽，请前往前端导入更多账号。")
+        #     return None, None
 
         email = mailbox_info["email"]
         set_last_email(email)
@@ -577,6 +594,11 @@ def get_email_and_token(proxies: Any = None) -> tuple:
                     headers=headers, json=body,
                     proxies=mail_proxies, verify=_ssl_verify(), timeout=15,
                 )
+                if res.status_code >= 400:
+                    print(
+                        f"[{cfg.ts()}] [WARNING] cloudflare_temp_email邮箱申请失败 "
+                        f"(尝试 {attempt + 1}/5, HTTP {res.status_code}): {res.text}"
+                    )
                 res.raise_for_status()
                 data = res.json()
                 if data and data.get("address"):
@@ -588,7 +610,14 @@ def get_email_and_token(proxies: Any = None) -> tuple:
                 print(f"[{cfg.ts()}] [WARNING] cloudflare_temp_email邮箱申请失败 (尝试 {attempt + 1}/5): {res.text}")
                 time.sleep(1)
             except Exception as e:
-                print(f"[{cfg.ts()}] [ERROR] cloudflare_temp_email邮箱注册网络异常，准备重试: {e}")
+                response = getattr(e, "response", None)
+                if response is not None:
+                    print(
+                        f"[{cfg.ts()}] [ERROR] cloudflare_temp_email邮箱注册请求异常，准备重试: "
+                        f"HTTP {getattr(response, 'status_code', 'unknown')} {getattr(response, 'text', '')}"
+                    )
+                else:
+                    print(f"[{cfg.ts()}] [ERROR] cloudflare_temp_email邮箱注册网络异常，准备重试: {e}")
                 time.sleep(2)
         return None, None
 

@@ -10,6 +10,60 @@ os.makedirs("data", exist_ok=True)
 DB_PATH = "data/data.db"
 
 
+def classify_token_payload(token_payload: Any) -> dict:
+    """Classify local inventory records for UI and CPA eligibility checks."""
+    details = {
+        "status": "未知",
+        "account_type": "unknown",
+        "cpa_eligible": False,
+        "maintenance_ready": False,
+    }
+
+    if isinstance(token_payload, str):
+        try:
+            token_payload = json.loads(token_payload)
+        except Exception:
+            token_payload = None
+
+    if not isinstance(token_payload, dict):
+        return details
+
+    if token_payload.get("status") == "仅注册成功":
+        details.update({
+            "status": "仅注册成功",
+            "account_type": "reg_only",
+        })
+        return details
+
+    has_id = bool(str(token_payload.get("id_token", "")).strip())
+    has_access = bool(str(token_payload.get("access_token", "")).strip())
+    has_refresh = bool(str(token_payload.get("refresh_token", "")).strip())
+
+    if has_id and has_access:
+        details.update({
+            "status": "有凭证",
+            "account_type": "credential",
+            "cpa_eligible": True,
+            "maintenance_ready": has_refresh,
+        })
+    elif has_refresh:
+        details.update({
+            "status": "待刷新",
+            "account_type": "credential",
+            "cpa_eligible": False,
+            "maintenance_ready": True,
+        })
+    elif has_id or has_access:
+        details.update({
+            "status": "凭证不全",
+            "account_type": "credential",
+            "cpa_eligible": False,
+            "maintenance_ready": False,
+        })
+
+    return details
+
+
 class get_db_conn:
     """抹平 SQLite 和 MySQL 连接差异"""
     def __init__(self, as_dict=False):
@@ -104,6 +158,89 @@ def init_db():
     print(f"[{cfg.ts()}] [系统] 数据库模块初始化完成 (引擎: {DB_TYPE.upper()})")
 
 
+def sync_token_to_chatgpt2api(email: str, access_token: str):
+    """
+    无缝对接 chatgpt2api 项目：
+    1. 尝试通过 http://localhost:8000/api/accounts API 导入 token
+    2. 若 API 连不上，直接修改 /Users/linkunkun/Documents/TempTry/chatgpt2api/data/accounts.json
+    """
+    import json
+    import os
+
+    api_url = "http://localhost:8000/api/accounts"
+    auth_key = "chatgpt2api"
+    json_path = "/Users/linkunkun/Documents/TempTry/chatgpt2api/data/accounts.json"
+
+    # 1. 尝试 API 导入
+    try:
+        import httpx
+        with httpx.Client(timeout=3) as client:
+            r = client.post(
+                api_url,
+                headers={"Authorization": auth_key},
+                json={"tokens": [access_token]}
+            )
+            if r.status_code in (200, 201):
+                print(f"[{cfg.ts()}] [Sync] 成功通过 API 将账号 {email} 同步到 chatgpt2api 项目")
+                return True
+    except Exception:
+        pass
+
+    # 2. 尝试文件直接写入
+    if os.path.exists(os.path.dirname(json_path)):
+        try:
+            accounts = []
+            if os.path.exists(json_path):
+                try:
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        accounts = json.load(f)
+                except Exception:
+                    accounts = []
+            if not isinstance(accounts, list):
+                accounts = []
+
+            # 检查是否已存在
+            found = False
+            for acc in accounts:
+                if acc.get("email") == email or acc.get("access_token") == access_token:
+                    acc["access_token"] = access_token
+                    acc["email"] = email
+                    acc["status"] = "正常"
+                    found = True
+                    break
+
+            if not found:
+                new_acc = {
+                    "access_token": access_token,
+                    "type": "Free",
+                    "status": "正常",
+                    "quota": 8,
+                    "email": email,
+                    "user_id": None,
+                    "limits_progress": [
+                        {"feature_name": "deep_research", "remaining": 5, "reset_after": None},
+                        {"feature_name": "file_upload", "remaining": 5, "reset_after": None},
+                        {"feature_name": "paste_text_to_file", "remaining": 3, "reset_after": None},
+                        {"feature_name": "image_gen", "remaining": 8, "reset_after": None}
+                    ],
+                    "default_model_slug": "auto",
+                    "restore_at": None,
+                    "success": 0,
+                    "fail": 0,
+                    "last_used_at": None
+                }
+                accounts.append(new_acc)
+
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(accounts, f, indent=2, ensure_ascii=False)
+            print(f"[{cfg.ts()}] [Sync] 成功直接写入文件将账号 {email} 同步到 chatgpt2api 项目")
+            return True
+        except Exception as e:
+            print(f"[{cfg.ts()}] [Sync] 写入 chatgpt2api 配置文件失败: {e}")
+
+    return False
+
+
 def save_account_to_db(email: str, password: str, token_json_str: str) -> bool:
     try:
         with get_db_conn() as conn:
@@ -112,7 +249,18 @@ def save_account_to_db(email: str, password: str, token_json_str: str) -> bool:
                 INSERT OR REPLACE INTO accounts (email, password, token_data)
                 VALUES (?, ?, ?)
             ''', (email, password, token_json_str))
-            return True
+            
+        # 成功保存到数据库后，自动触发同步到 chatgpt2api 项目
+        try:
+            token_payload = json.loads(token_json_str) if isinstance(token_json_str, str) else token_json_str
+            if isinstance(token_payload, dict):
+                access_token = token_payload.get("access_token") or token_payload.get("accessToken")
+                if access_token:
+                    sync_token_to_chatgpt2api(email, access_token)
+        except Exception:
+            pass
+
+        return True
     except Exception as e:
         print(f"[{cfg.ts()}] [ERROR] 数据库保存失败: {e}")
         return False
@@ -179,32 +327,35 @@ def delete_accounts_by_emails(emails: list) -> bool:
         return False
 
 
-def get_accounts_page(page: int = 1, page_size: int = 50, hide_reg: str = "0") -> dict:
+def get_accounts_page(page: int = 1, page_size: int = 50, hide_reg: str = "0", account_filter: str = "all") -> dict:
     try:
         with get_db_conn() as conn:
             c = get_cursor(conn)
-            where_clause = ""
-            if hide_reg == "1":
-                where_clause = " WHERE token_data NOT LIKE '%\"仅注册成功\"%'"
-            count_sql = f"SELECT COUNT(1) FROM accounts{where_clause}"
-            execute_sql(c, count_sql)
-            total = c.fetchone()[0]
-
-            offset = (page - 1) * page_size
-            data_sql = f"SELECT email, password, created_at, token_data FROM accounts{where_clause} ORDER BY id DESC LIMIT ? OFFSET ?"
-            execute_sql(c, data_sql, (page_size, offset))
+            execute_sql(c, "SELECT email, password, created_at, token_data FROM accounts ORDER BY id DESC")
             rows = c.fetchall()
 
-            data = [
-                {
+            data = []
+            for r in rows:
+                classified = classify_token_payload(r[3])
+                item = {
                     "email": r[0],
                     "password": r[1],
                     "created_at": r[2],
-                    "status": "有凭证" if '"access_token"' in str(r[3] or "") else (
-                        "仅注册成功" if '"仅注册成功"' in str(r[3] or "") else "未知")
+                    **classified,
                 }
-                for r in rows
-            ]
+                data.append(item)
+
+            if hide_reg == "1":
+                data = [item for item in data if item["account_type"] != "reg_only"]
+
+            if account_filter == "credential":
+                data = [item for item in data if item["account_type"] == "credential"]
+            elif account_filter == "reg_only":
+                data = [item for item in data if item["account_type"] == "reg_only"]
+
+            total = len(data)
+            offset = (page - 1) * page_size
+            data = data[offset: offset + page_size]
             return {"total": total, "data": data}
     except Exception as e:
         print(f"[{cfg.ts()}] [ERROR] 分页获取账号列表失败: {e}")
@@ -264,6 +415,40 @@ def import_local_mailboxes(mailboxes_data: list) -> int:
     except Exception as e:
         print(f"[{cfg.ts()}] [ERROR] 导入邮箱库失败: {e}")
     return count
+
+
+def import_authorized_accounts(accounts_data: list) -> tuple[int, int]:
+    inserted = 0
+    updated = 0
+    try:
+        with get_db_conn() as conn:
+            c = get_cursor(conn)
+            for acc in accounts_data:
+                email = str(acc.get("email", "")).strip().lower()
+                if not email:
+                    continue
+                password = str(acc.get("password", "")).strip()
+                token_json = json.dumps({
+                    "email": email,
+                    "client_id": str(acc.get("client_id", "")).strip(),
+                    "refresh_token": str(acc.get("refresh_token", "")).strip(),
+                    "access_token": "",
+                    "id_token": "",
+                    "type": "authorized_import",
+                    "source": "manual_authorized_import",
+                }, ensure_ascii=False)
+
+                execute_sql(c, "SELECT id FROM accounts WHERE email = ?", (email,))
+                existing = c.fetchone()
+                if existing:
+                    execute_sql(c, "UPDATE accounts SET password = ?, token_data = ? WHERE email = ?", (password, token_json, email))
+                    updated += 1
+                else:
+                    execute_sql(c, "INSERT INTO accounts (email, password, token_data) VALUES (?, ?, ?)", (email, password, token_json))
+                    inserted += 1
+    except Exception as e:
+        print(f"[{cfg.ts()}] [ERROR] 导入授权账号失败: {e}")
+    return inserted, updated
 
 
 def get_local_mailboxes_page(page: int = 1, page_size: int = 50) -> dict:

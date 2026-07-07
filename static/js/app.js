@@ -22,62 +22,34 @@ function normalizeBooleanLike(value, defaultValue = false) {
 createApp({
     data() {
         return {
-            appVersion: 'v12.0.0',
+            appVersion: 'v12.0.3',
             isLoggedIn: !!localStorage.getItem('auth_token'),
             loginPassword: '',
-            currentTab: window.location.hash.replace('#', '') || 'console',
+            currentTab: window.location.hash.replace('#', '') || 'accounts',
             isDarkMode: localStorage.getItem('ui_theme_mode') === 'dark',
 			showAccountsPlaintext: false,
             isRunning: false,
             tabs: [
-                { id: 'console', name: '运行主页', icon: '💻' },
-                { id: 'cluster', name: '集群总控', icon: '🖥️' },
-                { id: 'email', name: '邮箱配置', icon: '📧' },
-                { id: 'mailboxes', name: '微软邮箱库', icon: '📬' },
                 { id: 'accounts', name: '账号库存', icon: '📦' },
-                { id: 'cloud', name: '云端库存', icon: '☁️' },
-                { id: 'sms', name: '手机接码', icon: '📱' },
-				// { id: 'cf_routes', name: 'CF 路由', icon: '🌍' },
-                { id: 'proxy', name: '网络代理', icon: '🌐' },
-                { id: 'relay', name: '中转管仓', icon: '☁️' },
-                { id: 'notify', name: '消息通知', icon: '📢' },
-                { id: 'concurrency', name: '并发与系统', icon: '⚙️' }
+                { id: 'cloud', name: '配额管理', icon: '☁️' },
+                { id: 'mailboxes', name: '微软邮箱库', icon: '📬' },
+                { id: 'relay', name: '维护设置', icon: '🛠️' },
+                { id: 'console', name: '维护日志', icon: '💻' },
             ],
-			cfGlobalStatus: null,
-			isLoadingSync: false,
-            luckmailManualQty: 1,
-            luckmailManualAutoTag: false,
-            isManualBuying: false,
-			cfRoutes: [],
-            heroSmsBalance: '0.00',
-            heroSmsPrices: [],
-            isLoadingBalance: false,
-            isLoadingPrices: false,
-            selectedCfRoutes: [],
-			cfGlobalStatusList: [],
-			cfStatusTimer: null,
-            isLoadingCfRoutes: false,
 			isDeletingAccounts: false,
-			isDeletingCfRoutes: false,
-			subDomainModal: {
-				show: false,
-				email: '',
-				key: '',
-				count: 10,
-				sync: false,
-				loading: false
-			},
-			tempSubDomains: [],
             logs: [],
             logBuffer: [],
             logFlushTimer: null,
             config: null,
-            blacklistStr: "",
-            warpListStr: "",
-            rawProxyListStr: "",
             accounts: [],
             selectedAccounts: [],
-            hideRegisterOnlyAccounts: false,
+            accountFilter: 'credential',
+            showImportAccountModal: false,
+            importAccountText: '',
+            isImportingAccounts: false,
+            showSessionJsonModal: false,
+            sessionJsonText: '',
+            isImportingSessionJson: false,
 			currentPage: 1,
             pageSize: 10,
             totalAccounts: 0,
@@ -86,7 +58,7 @@ createApp({
                 success: 0, failed: 0, retries: 0, total: 0, target: 0,
                 pwd_blocked: 0, phone_verify: 0,
                 success_rate: '0.0%', elapsed: '0.0s', avg_time: '0.0s', progress_pct: '0%',
-                mode: '未启动'
+                mode: '维护待命'
             },
             statsTimer: null,
 
@@ -100,6 +72,7 @@ createApp({
                 ai_base: true, cluster_url: true, proxy: true, clash_api: true,
                 clash_test: true, tg_token: false, tg_chatid: false, cpa_url: true, sub_url: true,
                 cluster_secret: false, hero_key: false, duck_token: false, duck_cookie: false,
+                smsbower_key: false,
                 luckmail: false,
                 temporam: false,
                 tmailor_token: false,
@@ -115,12 +88,6 @@ createApp({
             confirmModal: { show: false, message: '', resolve: null },
             updateInfo: { hasUpdate: false, version: '', url: '', changelog: '' },
             sub2apiGroups: [],
-            gmailOAuth: {
-                authUrl: '',
-                pastedCode: '',
-                isLoading: false,
-                isGenerating: false
-            },
             isLoadingSub2APIGroups: false,
             cloudAccounts: [],
             selectedCloud: [],
@@ -135,7 +102,6 @@ createApp({
             showCloudDetailModal: false,
             currentCloudDetail: null,
             nowTimestamp: Math.floor(Date.now() / 1000),
-            clusterNodes: {},
             mailboxes: [],
             selectedMailboxes: [],
             mailboxPage: 1,
@@ -154,14 +120,6 @@ createApp({
                 isLoading: false
             },
             BUILTIN_CLIENT_ID: "7feada80-d946-4d06-b134-73afa3524fb7",
-            clashPool: {
-                loading: false,
-                subUrl: '',
-                target: 'all',
-                count: 5,
-                instances: [],
-                groups: []
-            },
             gmail_oauth_mode: {
                 master_email: '',
                 fission_enable: false,
@@ -171,10 +129,17 @@ createApp({
                 suffix_len_max: 12
             },
             cloudStatusFilter: 'all',
+            searchAccounts: '',
+            searchCloud: '',
+            searchMailboxes: '',
+
         };
     },
     mounted() {
         this.applyTheme();
+        if (!this.tabs.some(t => t.id === this.currentTab)) {
+            this.currentTab = 'accounts';
+        }
         if (this.isLoggedIn) {
             this.initApp();
         }
@@ -196,7 +161,28 @@ createApp({
             return Math.ceil(this.totalAccounts / this.pageSize) || 1;
         },
         filteredAccounts() {
-            return this.accounts;
+            let res = this.accounts;
+            if (this.searchAccounts) {
+                const term = this.searchAccounts.toLowerCase();
+                res = res.filter(a => a.email && a.email.toLowerCase().includes(term));
+            }
+            return res;
+        },
+        filteredCloud() {
+            let res = this.cloudAccounts;
+            if (this.searchCloud) {
+                const term = this.searchCloud.toLowerCase();
+                res = res.filter(a => a.credential && a.credential.toLowerCase().includes(term));
+            }
+            return res;
+        },
+        filteredMailboxes() {
+            let res = this.mailboxes;
+            if (this.searchMailboxes) {
+                const term = this.searchMailboxes.toLowerCase();
+                res = res.filter(a => a.email && a.email.toLowerCase().includes(term));
+            }
+            return res;
         },
         cloudTotalPages() {
             return Math.ceil(this.cloudTotal / this.cloudPageSize) || 1;
@@ -279,16 +265,12 @@ createApp({
         },
         async initApp() {
             await this.fetchConfig();
-            this.fetchAccounts();
             this.initSSE();
+            this.fetchAccounts();
+            this.fetchCloudAccounts();
+            this.fetchMailboxes();
             this.startStatsPolling();
             this.checkUpdate();
-            if (this.config && this.config.reg_mode === 'extension') {
-                this.listenToExtension();
-            }
-            if (this.currentTab === 'proxy') {
-                this.fetchClashPool();
-            }
         },
         startStatsPolling() {
             if(this.statsTimer) clearTimeout(this.statsTimer);
@@ -299,35 +281,8 @@ createApp({
             try {
                 const res = await this.authFetch('/api/stats');
                 const data = await res.json();
-
                 this.stats = data;
-
-                if (this.config?.reg_mode === 'extension') {
-                    data.target = this.config?.normal_mode?.target_count || 0;
-                    const wasRunning = this.isRunning;
-                    this.isRunning = data.is_running;
-                    if (this.isRunning) {
-                        this.stats.mode = '插件托管运行中...';
-                        if (parseFloat(data.elapsed) <= 0) {
-                            this.stats.elapsed = "0.0s";
-                        }
-                        if (!wasRunning && this.isExtConnected && !this._extDispatchTimer) {
-                            console.log("[总控] 同步到全局运行状态，当前节点自动加入生产线...");
-                            this.dispatchExtensionTask();
-                        }
-                    }
-                this.stats = data;
-                } else {
-                    this.isRunning = data.is_running;
-                }
-
-                if (this.currentTab === 'cluster') {
-                    const cRes = await this.authFetch('/api/cluster/view');
-                    const cData = await cRes.json();
-                    if (cData.status === 'success') {
-                        this.clusterNodes = cData.nodes;
-                    }
-                }
+                this.isRunning = data.is_running;
             } catch(e) {
 
             } finally {
@@ -355,6 +310,27 @@ createApp({
                         suffix_len_max: 8
                     };
                 }
+
+
+                if (this.config) {
+                    if (!this.config.smsbower) {
+                        this.config.smsbower = {
+                            enabled: false, api_key: '', country: 0, service: 'dr',
+                            auto_pick_country: true, verify_on_register: false, reuse_phone: true,
+                            max_price: 0.08, min_price: 0.05, min_balance: 10.0, max_tries: 3, poll_timeout_sec: 180
+                        };
+                    } else {
+                        this.config.smsbower.min_price = parseFloat(this.config.smsbower.min_price) || 0.05;
+                        this.config.smsbower.enabled = normalizeBooleanLike(this.config.smsbower.enabled, false);
+                        this.config.smsbower.auto_pick_country = normalizeBooleanLike(this.config.smsbower.auto_pick_country, true);
+                        this.config.smsbower.reuse_phone = normalizeBooleanLike(this.config.smsbower.reuse_phone, true);
+                        this.config.smsbower.verify_on_register = normalizeBooleanLike(this.config.smsbower.verify_on_register, false);
+                    }
+
+                    if (this.config.hero_sms) {
+                        this.config.hero_sms.enabled = normalizeBooleanLike(this.config.hero_sms.enabled, false);
+                    }
+                }
                 if (this.config.local_microsoft.suffix_mode === undefined) {
                     this.config.local_microsoft.suffix_mode = 'fixed';
                 }
@@ -366,6 +342,9 @@ createApp({
                 }
                 if (this.config.local_microsoft.pool_fission === undefined) {
                     this.config.local_microsoft.pool_fission = false;
+                }
+                if (!this.config.sub2api_mode) {
+                    this.config.sub2api_mode = {};
                 }
                 if (this.config.sub2api_mode.test_model === undefined) {
                     this.config.sub2api_mode.test_model = 'gpt-5.2';
@@ -388,9 +367,6 @@ createApp({
                 if (!this.config.temporam) {
                     this.config.temporam = { cookie: '' };
                 }
-                if (!this.config.reg_mode) {
-                        this.config.reg_mode = 'protocol';
-                    }
                 if (!this.config.tg_bot.template_success) {
                     this.config.tg_bot.template_success = "🎉 <b>注册成功</b>\n⏰ 时间: <code>{time}</code>\n📧 账号: <code>{email}</code>\n🔑 密码: <code>{password}</code>";
                 }
@@ -408,9 +384,6 @@ createApp({
                 }
 				if (!this.config.sub_domain_level) {
                     this.config.sub_domain_level = 1;
-                }
-                if (!this.config.sub2api_mode) {
-                    this.config.sub2api_mode = {};
                 }
                 if (this.config.sub2api_mode.account_concurrency === undefined) {
                     this.config.sub2api_mode.account_concurrency = 10;
@@ -430,44 +403,10 @@ createApp({
                 if (this.config.sub2api_mode.enable_ws_mode === undefined) {
                     this.config.sub2api_mode.enable_ws_mode = true;
                 }
-                if(this.config.clash_proxy_pool && Array.isArray(this.config.clash_proxy_pool.blacklist)) {
-                    this.blacklistStr = this.config.clash_proxy_pool.blacklist.join('\n');
-                } else {
-                    this.blacklistStr = '';
-                }
-                if (this.config.clash_proxy_pool.cluster_count !== undefined) {
-                    this.clashPool.count = parseInt(this.config.clash_proxy_pool.cluster_count) || 5;
-                }
-                if (this.config.clash_proxy_pool.sub_url !== undefined) {
-                    this.clashPool.subUrl = this.config.clash_proxy_pool.sub_url;
-                }
-                if (!this.config.raw_proxy_pool || typeof this.config.raw_proxy_pool !== 'object' || Array.isArray(this.config.raw_proxy_pool)) {
-                    this.config.raw_proxy_pool = { enable: false, proxy_list: [] };
-                } else {
-                    this.config.raw_proxy_pool.enable = normalizeBooleanLike(this.config.raw_proxy_pool.enable, false);
-                    if (!Array.isArray(this.config.raw_proxy_pool.proxy_list)) {
-                        this.config.raw_proxy_pool.proxy_list = [];
-                    }
-                }
-                if(Array.isArray(this.config.warp_proxy_list)) {
-                    this.warpListStr = this.config.warp_proxy_list.join('\n');
-                } else {
-                    this.config.warp_proxy_list = [];
-                    this.warpListStr = '';
-                }
-                this.rawProxyListStr = this.config.raw_proxy_pool.proxy_list.join('\n');
-                if (this.config.cluster_node_name === undefined) this.config.cluster_node_name = '';
-                if (this.config.cluster_master_url === undefined) this.config.cluster_master_url = '';
-                if (this.config.cluster_secret === undefined) this.config.cluster_secret = 'wenfxl666';
             } catch (e) {}
         },
         async saveConfig() {
             try {
-                if(this.config.clash_proxy_pool) {
-                    this.config.clash_proxy_pool.blacklist = this.blacklistStr.split('\n').map(s => s.trim()).filter(s => s);
-                    this.config.clash_proxy_pool.cluster_count = parseInt(this.clashPool.count) || 5;
-                    this.config.clash_proxy_pool.sub_url = this.clashPool.subUrl;
-                }
                 if (this.config?.sub2api_mode) {
                     this.config.sub2api_mode.default_proxy = String(this.config.sub2api_mode.default_proxy || '')
                         .split(/\r?\n/)
@@ -489,12 +428,6 @@ createApp({
                     this.config.local_microsoft.suffix_len_min = minLen;
                     this.config.local_microsoft.suffix_len_max = maxLen;
                 }
-                this.config.warp_proxy_list = this.warpListStr.split('\n').map(s => s.trim()).filter(s => s);
-                if (!this.config.raw_proxy_pool || typeof this.config.raw_proxy_pool !== 'object' || Array.isArray(this.config.raw_proxy_pool)) {
-                    this.config.raw_proxy_pool = { enable: false, proxy_list: [] };
-                }
-                this.config.raw_proxy_pool.enable = normalizeBooleanLike(this.config.raw_proxy_pool.enable, false);
-                this.config.raw_proxy_pool.proxy_list = this.rawProxyListStr.split('\n').map(s => s.trim()).filter(s => s);
                 const res = await this.authFetch('/api/config', {
                     method: 'POST', body: JSON.stringify(this.config)
                 });
@@ -510,11 +443,7 @@ createApp({
                 this.currentPage = 1;
             }
             try {
-                let url = `/api/accounts?page=${this.currentPage}&page_size=${this.pageSize}`;
-                if (this.hideRegisterOnlyAccounts) {
-                    url += '&hide_reg=1';
-                }
-
+                const url = `/api/accounts?page=${this.currentPage}&page_size=${this.pageSize}&account_filter=${this.accountFilter}`;
                 const res = await this.authFetch(url);
                 const data = await res.json();
                 if(data.status === 'success') {
@@ -533,7 +462,12 @@ createApp({
             }
         },
 		changePage(newPage) {
-            if (newPage < 1 || newPage > this.totalPages) return;
+            if (!newPage || isNaN(newPage)) newPage = 1;
+            newPage = Math.max(1, Math.min(newPage, this.totalPages));
+            if (this.currentPage === newPage) {
+                this.$forceUpdate(); // 强制刷新非法输入的UI
+                return;
+            }
             this.currentPage = newPage;
             this.selectedAccounts = []; 
             this.fetchAccounts(false);
@@ -554,31 +488,21 @@ createApp({
             if (tabId === 'accounts') {
                 this.fetchAccounts();
             }
-			if (tabId === 'email') {
-				this.fetchConfig();
-			}
 			if (tabId === 'cloud') {
 			    this.fetchCloudAccounts();
 			}
-            if (tabId === 'cluster') {
-                this.initClusterWebSocket();
-            } else {
-                if (this.clusterWs) this.clusterWs.close();
-            }
             if (tabId === 'mailboxes') {
                 this.fetchMailboxes();
             }
-            if (tabId === 'proxy') {
-                this.fetchClashPool();
-            }
         },
         async exportSelectedAccounts() {
-            if (this.selectedAccounts.length === 0) {
+            const eligibleAccounts = this.eligibleSelectedAccounts();
+            if (eligibleAccounts.length === 0) {
                 this.showToast("请先勾选需要导出的账号", "warning");
                 return;
             }
 
-            const emails = this.selectedAccounts.map(acc => acc.email);
+            const emails = eligibleAccounts.map(acc => acc.email);
 
             try {
                 const res = await this.authFetch('/api/accounts/export_selected', {
@@ -649,6 +573,58 @@ createApp({
                 this.showToast("导出请求失败，请检查网络或 JSZip 是否加载", "error");
             }
         },
+        async submitImportAuthorizedAccounts() {
+            if (!this.importAccountText.trim()) {
+                return this.showToast("请输入授权账号内容", "warning");
+            }
+            this.isImportingAccounts = true;
+            try {
+                const res = await this.authFetch('/api/accounts/import_authorized', {
+                    method: 'POST',
+                    body: JSON.stringify({ raw_text: this.importAccountText })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    this.showToast(data.message, 'success');
+                    this.showImportAccountModal = false;
+                    this.importAccountText = '';
+                    this.accountFilter = 'all';
+                    this.fetchAccounts(true);
+                } else {
+                    this.showToast(data.message || '导入失败', 'error');
+                }
+            } catch (error) {
+                this.showToast('导入请求异常，请检查后端', 'error');
+            } finally {
+                this.isImportingAccounts = false;
+            }
+        },
+        async submitImportSessionJson() {
+            if (!this.sessionJsonText.trim()) {
+                return this.showToast('请粘贴从 chatgpt.com/api/auth/session 复制的 JSON', 'warning');
+            }
+            this.isImportingSessionJson = true;
+            try {
+                const res = await this.authFetch('/api/accounts/import_session_json', {
+                    method: 'POST',
+                    body: JSON.stringify({ raw_text: this.sessionJsonText })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    this.showToast(data.message, 'success');
+                    this.showSessionJsonModal = false;
+                    this.sessionJsonText = '';
+                    this.accountFilter = 'all';
+                    this.fetchAccounts(true);
+                } else {
+                    this.showToast(data.message || '导入失败', 'error');
+                }
+            } catch (error) {
+                this.showToast('请求异常，请检查后端连接', 'error');
+            } finally {
+                this.isImportingSessionJson = false;
+            }
+        },
 		maskEmail(email) {
             if (!email) return '';
             const parts = email.split('@');
@@ -717,84 +693,19 @@ createApp({
             if (event.target.checked) this.selectedAccounts = [...this.filteredAccounts];
             else this.selectedAccounts = [];
         },
-        toggleHideRegisterOnlyAccounts() {
-            this.hideRegisterOnlyAccounts = !this.hideRegisterOnlyAccounts;
-            this.currentPage = 1;
-            this.fetchAccounts(true);
-        },
 		async toggleSystem() {
             if (this.isToggling) return;
             this.isToggling = true;
             try {
                 if (this.isRunning) {
-                    this.isRunning = false;
-                    if (this._extDispatchTimer) {
-                        clearTimeout(this._extDispatchTimer);
-                        this._extDispatchTimer = null;
-                    }
-                    if (this.config?.reg_mode === 'extension') {
-                        window.postMessage({ type: "CMD_STOP_WORKER" }, "*");
-                        await this.authFetch('/api/ext/stop', { method: 'POST' });
-                        this.showToast("已向集群发送停止指令", "info");
-                    } else {
-                        await this.stopTask();
-                    }
+                    await this.stopTask();
                 } else {
-                    if (this.config?.reg_mode === 'extension') {
-                        this.showToast("📡 正在探测节点在线状态...", "info");
-                        try {
-                            const localId = localStorage.getItem('local_worker_id') || 'Node-Pilot-01';
-                            const checkRes = await this.authFetch(`/api/ext/check_node?worker_id=${localId}`);
-                            const checkData = await checkRes.json();
-                            if (!checkData.online) {
-                                const now = new Date();
-                                const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
-                                this.showToast(`🚫 启动失败：节点 [${localId}] 未连接或已掉线！`, "error");
-                                this.logs.push({
-                                    parsed: true,
-                                    time: timeStr,
-                                    level: '系统',
-                                    text: '🛑 请确认是否安装了本项目plugin目录里的浏览器插件，并强制刷新该页面！',
-                                    raw: `[${timeStr}] [系统] 🛑 请确认是否安装了本项目plugin目录里的浏览器插件，并强制刷新该页面！`
-                                });
-                                return;
-                            }
-                        } catch (e) {
-
-                            this.showToast("🚫 无法连接到总控服务器检查状态", "error");
-                            return;
-                        }
-                        this.isRunning = true;
-                        this.currentTab = 'console';
-                        this.showToast("✅ 节点在线！已启动【浏览器插件托管】模式", "success");
-                        await this.authFetch('/api/ext/reset_stats', { method: 'POST' });
-                        await this.dispatchExtensionTask();
-
-                    } else {
-                        this.isRunning = true;
-                        this.currentTab = 'console';
-                        this.showToast("已启动【协议】模式", "success");
-                        let mode = 'normal';
-                        if (this.config?.cpa_mode?.enable) mode = 'cpa';
-                        if (this.config?.sub2api_mode?.enable) mode = 'sub2api';
-                        await this.startTask(mode);
-                    }
+                    this.currentTab = 'console';
+                    await this.startManualCheck();
                 }
             } finally {
                 this.isToggling = false;
             }
-        },
-        async startTask(mode) {
-            try {
-                const res = await this.authFetch(`/api/start?mode=${mode}`, { method: 'POST' });
-                const data = await res.json();
-                if (data.status === 'success') {
-                    this.isRunning = true;
-                    this.currentTab = 'console';
-                    this.pollStats();
-                    this.showToast(`启动成功`, "success");
-                } else { this.showToast(data.message, "error"); }
-            } catch (e) { this.showToast("启动请求发送失败", "error"); }
         },
         async stopTask() {
             try {
@@ -823,16 +734,23 @@ createApp({
                 this.showToast("停止请求发送失败", "error");
             }
         },
+        eligibleSelectedAccounts() {
+            return this.selectedAccounts.filter(acc => acc && acc.cpa_eligible);
+        },
         async bulkPushCPA() {
             if (!this.config.cpa_mode.enable) {
                 this.showToast("🚫 请先开启 CPA 巡检并填写 API", "warning"); return;
             }
-            if (this.selectedAccounts.length === 0) return;
+            const eligibleAccounts = this.eligibleSelectedAccounts();
+            if (eligibleAccounts.length === 0) {
+                this.showToast("当前选中账号里没有可纳入 CPA 的完整凭证账号", "warning");
+                return;
+            }
             const confirmed = await this.customConfirm(`确定推送到 CPA？`);
             if (!confirmed) return;
             this.currentTab = 'console';
-            for (let i = 0; i < this.selectedAccounts.length; i++) {
-                const acc = this.selectedAccounts[i];
+            for (let i = 0; i < eligibleAccounts.length; i++) {
+                const acc = eligibleAccounts[i];
                 try {
                     await this.authFetch('/api/account/action', {
                         method: 'POST', body: JSON.stringify({ email: acc.email, action: 'push' })
@@ -843,16 +761,20 @@ createApp({
             this.showToast(`批量推送完毕！`, "success");
             this.selectedAccounts = []; 
         },
-		async bulkPushSub2API() {
+        async bulkPushSub2API() {
             if (!this.config.sub2api_mode.enable) {
                 this.showToast("🚫 请先开启 Sub2API 模式并填写参数", "warning"); return;
             }
-            if (this.selectedAccounts.length === 0) return;
+            const eligibleAccounts = this.eligibleSelectedAccounts();
+            if (eligibleAccounts.length === 0) {
+                this.showToast("当前选中账号里没有可纳入后续仓管的完整凭证账号", "warning");
+                return;
+            }
             const confirmed = await this.customConfirm(`确定推送到 Sub2API？`);
             if (!confirmed) return;
             this.currentTab = 'console';
-            for (let i = 0; i < this.selectedAccounts.length; i++) {
-                const acc = this.selectedAccounts[i];
+            for (let i = 0; i < eligibleAccounts.length; i++) {
+                const acc = eligibleAccounts[i];
                 try {
                     await this.authFetch('/api/account/action', {
                         method: 'POST', body: JSON.stringify({ email: acc.email, action: 'push_sub2api' })
@@ -867,6 +789,10 @@ createApp({
             if (action === 'push' && !this.config.cpa_mode.enable) {
                 this.showToast("🚫 无法推送：请先配置 CPA 参数！", "warning"); return;
             }
+            if ((action === 'push' || action === 'push_sub2api') && !account.cpa_eligible) {
+                this.showToast("该账号仅注册成功或凭证不完整，已排除出后续 CPA 流程", "warning");
+                return;
+            }
             this.currentTab = 'console';
             try {
                 const res = await this.authFetch('/api/account/action', {
@@ -875,6 +801,13 @@ createApp({
                 const result = await res.json();
                 this.showToast(result.message, result.status);
             } catch (e) {}
+        },
+        setAccountFilter(filter) {
+            if (this.accountFilter === filter) return;
+            this.accountFilter = filter;
+            this.currentPage = 1;
+            this.selectedAccounts = [];
+            this.fetchAccounts(false);
         },
         async clearLogs() {
             this.logs = []; 
@@ -958,274 +891,6 @@ createApp({
                     }, 3000);
                 }
             };
-        },
-		handleSubDomainToggle() {
-			if (this.config.enable_sub_domains) {
-				this.subDomainModal.email = this.config.cf_api_email || '';
-				this.subDomainModal.key = this.config.cf_api_key || '';
-				this.subDomainModal.show = true;
-			}
-		},
-		// async executeGenerateDomainsOnly() {
-			// if (!this.config.mail_domains) return this.showToast('请先填写上方的主发信域名池！', 'warning');
-			
-			// const level = this.config.sub_domain_level || 1;
-
-			// try {
-				// const res = await this.authFetch('/api/config/generate_subdomains', {
-					// method: 'POST',
-					// body: JSON.stringify({
-						// main_domains: this.config.mail_domains,
-						// count: this.config.sub_domain_count || 10,
-						// level: level,
-						// api_email: this.config.cf_api_email || '',
-						// api_key: this.config.cf_api_key || '',
-						// sync: false
-					// })
-				// });
-				// const data = await res.json();
-				// if (data.status === 'success') {
-					// this.config.sub_domains_list = data.domains;
-					// this.showToast('生成成功！如需推送到 CF，请点击右侧推送按钮。', 'success');
-				// } else {
-					// this.showToast(data.message, 'error');
-				// }
-			// } catch (e) {
-				// this.showToast('生成接口请求失败', 'error');
-			// }
-		// },
-
-		async executeSyncToCF() {
-			const rawList = this.config.mail_domains || '';
-			const subDomains = rawList.split(',').map(d => d.trim()).filter(d => d);
-			
-			if (subDomains.length === 0) return this.showToast('当前没有可解析的主域，请先填写！', 'warning');
-			if (!this.config.cf_api_email || !this.config.cf_api_key) return this.showToast('请填写 CF 账号邮箱和 API Key！', 'warning');
-			const confirmed = await this.customConfirm(`把 ${subDomains.length} 个主域名解析到 Cloudflare，确定继续吗？`);
-			if (!confirmed) return;
-			this.isLoadingSync = true;
-			this.showToast('🚀 多线程同步中，请耐心等待...', 'info');
-            this.currentTab = 'console';
-			try {
-				const res = await this.authFetch('/api/config/add_wildcard_dns', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						sub_domains: subDomains.join(','),
-						api_email: this.config.cf_api_email,
-						api_key: this.config.cf_api_key
-					})
-				});
-				
-				const data = await res.json();
-				if (data.status === 'success') {
-					this.showToast('✅ 解析成功...', 'success');
-				} else {
-					this.showToast(data.message || '解析失败', 'error');
-				}
-			} catch (e) {
-				this.showToast('解析接口请求异常', 'error');
-			} finally {
-				this.isLoadingSync = false; 
-			}
-		},
-		// async checkCfGlobalStatus() {
-			// if (!this.config.mail_domains) return;
-			// const domains = this.config.mail_domains;
-			// try {
-				// const res = await this.authFetch(`/api/config/cf_global_status?main_domain=${encodeURIComponent(domains)}`);
-				// const data = await res.json();
-				// if (data.status === 'success') {
-					// this.cfGlobalStatusList = data.data; 
-					// const allEnabled = data.data.length > 0 && data.data.every(item => item.is_enabled);
-					// if (allEnabled && this.cfStatusTimer) {
-						// this.stopCfStatusPolling(); 
-						// this.showToast('✨ 线上状态已全部激活！', 'success');
-					// }
-				// }
-			// } catch (e) {
-				// this.showToast("无法获取 CF 路由全局状态", e);
-			// }
-		// },
-		// async startCfStatusPolling() {
-			// this.stopCfStatusPolling(); 
-			// this.isLoadingCfRoutes = true;
-			
-			// this.showToast("🚀 开启 CF 状态智能监控...");
-
-			// this.cfStatusTimer = setInterval(() => {
-				// this.checkCfGlobalStatus();
-			// }, 8000);
-			// await this.fetchCfRoutes(); 
-		// },
-		// stopCfStatusPolling() {
-			// if (this.cfStatusTimer) {
-				// clearInterval(this.cfStatusTimer);
-				// this.cfStatusTimer = null;
-				// this.isLoadingCfRoutes = false;
-				// this.showToast("🛑 智能监控已停止。");
-			// }
-		// },
-		// async fetchCfRoutes() {
-			// if (!this.config.mail_domains) return this.showToast('请先填写主发信域名池 (用于反推Zone ID)！', 'warning');
-			// if (!this.config.cf_api_email || !this.config.cf_api_key) return this.showToast('请填写 CF 账号邮箱和 API Key！', 'warning');
-
-			// this.isLoadingCfRoutes = true;
-			// this.showToast('🔍 正在连线 Cloudflare 查询线上路由记录...', 'info');
-
-			// try {
-				// const res = await this.authFetch('/api/config/query_cf_domains', {
-					// method: 'POST',
-					// body: JSON.stringify({
-						// main_domains: this.config.mail_domains,
-						// api_email: this.config.cf_api_email,
-						// api_key: this.config.cf_api_key
-					// })
-				// });
-				// const data = await res.json();
-				// if (data.status === 'success') {
-					// if (data.domains) {
-						// this.cfRoutes = data.domains.split(',').filter(d=>d).map(d => ({ 
-							// domain: d, 
-							// loading: false
-						// }));
-					// } else {
-						// this.cfRoutes = [];
-					// }
-					// this.selectedCfRoutes = [];
-					// this.showToast(data.message, 'success');
-				// } else {
-					// this.showToast(data.message, 'error');
-				// }
-				// await this.checkCfGlobalStatus();
-			// } catch (e) {
-				// this.showToast('查询接口请求失败', 'error');
-			// } finally {
-				// if (!this.cfStatusTimer) {
-					// this.isLoadingCfRoutes = false;
-				// }
-			// }
-		// },
-
-		// async deleteSelectedCfRoutes() {
-			// if (this.selectedCfRoutes.length === 0) return;
-			// const domainsToDelete = this.selectedCfRoutes.map(item => item.domain);
-			
-			// this.isDeletingCfRoutes = true;
-			// try {
-				// await this.executeDeleteCfDomains(domainsToDelete);
-			// } finally {
-				// this.isDeletingCfRoutes = false;
-			// }
-		// },
-
-		// async deleteSingleCfRoute(routeObj) {
-			// routeObj.loading = true; 
-			// try {
-				// await this.executeDeleteCfDomains([routeObj.domain]);
-			// } finally {
-				// routeObj.loading = false;
-			// }
-		// },
-
-		// async executeDeleteCfDomains(domainsArray) {
-			// if (!this.config.cf_api_email || !this.config.cf_api_key) return this.showToast('请填写 CF 账号邮箱和 API Key！', 'warning');
-
-			// const count = domainsArray.length;
-			// const confirmed = await this.customConfirm(`⚠️ 危险操作：\n\n即将调用 Cloudflare API 强制删除这 ${count} 个域名的路由解析记录。确定要继续吗？`);
-			// if (!confirmed) return;
-			// if (count > 1) this.isDeletingCfRoutes = true;
-			// this.showToast(`🗑️ 正在连线 Cloudflare 销毁 ${count} 条记录...`, 'info');
-
-			// try {
-				// const res = await this.authFetch('/api/config/delete_cf_domains', {
-					// method: 'POST',
-					// body: JSON.stringify({
-						// sub_domains: domainsArray.join(','),
-						// api_email: this.config.cf_api_email,
-						// api_key: this.config.cf_api_key
-					// })
-				// });
-				// const data = await res.json();
-				// if (data.status === 'success') {
-					// this.showToast(data.message, 'success');
-					// this.fetchCfRoutes();
-				// } else {
-					// this.showToast(data.message, 'error');
-				// }
-			// } catch (e) {
-				// this.showToast('删除接口请求失败', 'error');
-			// } finally {
-				// this.isDeletingCfRoutes = false;
-			// }
-		// },
-
-		toggleAllCfRoutes(event) {
-			if (event.target.checked) this.selectedCfRoutes = [...this.cfRoutes];
-			else this.selectedCfRoutes = [];
-		},
-        async fetchHeroSmsBalance() {
-            if (!this.config.hero_sms.api_key) return this.showToast('请先填写 API Key！', 'warning');
-            this.isLoadingBalance = true;
-            try {
-                const res = await this.authFetch('/api/sms/balance'); // 需后端配合增加此接口
-                const data = await res.json();
-                if (data.status === 'success') {
-                    this.heroSmsBalance = data.balance;
-                    this.showToast('余额刷新成功', 'success');
-                } else {
-                    this.showToast(data.message || '查询失败', 'error');
-                }
-            } catch (e) {
-                this.showToast('查询异常: ' + e.message, 'error');
-            } finally {
-                this.isLoadingBalance = false;
-            }
-        },
-        async fetchHeroSmsPrices() {
-            if (!this.config.hero_sms.api_key) return this.showToast('请先填写 API Key！', 'warning');
-            this.isLoadingPrices = true;
-            try {
-                const res = await this.authFetch('/api/sms/prices', {
-                    method: 'POST',
-                    body: JSON.stringify({ service: this.config.hero_sms.service })
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                    this.heroSmsPrices = data.prices;
-                    this.showToast(`获取到 ${data.prices.length} 个国家的库存数据`, 'success');
-                } else {
-                    this.showToast(data.message || '获取失败', 'error');
-                }
-            } catch (e) {
-                this.showToast('通信异常: ' + e.message, 'error');
-            } finally {
-                this.isLoadingPrices = false;
-            }
-        },
-        async executeManualLuckMailBuy() {
-            if (this.luckmailManualQty < 1) return;
-            this.isManualBuying = true;
-            try {
-                const res = await this.authFetch('/api/luckmail/bulk_buy', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        quantity: this.luckmailManualQty,
-                        auto_tag: this.luckmailManualAutoTag,
-                        config: this.config.luckmail
-                    })
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                    this.showToast(data.message, 'success');
-                } else {
-                    this.showToast('购买失败: ' + data.message, 'error');
-                }
-            } catch (e) {
-                this.showToast('网络请求异常', 'error');
-            } finally {
-                this.isManualBuying = false;
-            }
         },
         async fetchSub2ApiGroups() {
             if (!this.config || !this.config.sub2api_mode) return;
@@ -1335,44 +1000,6 @@ createApp({
                 window.open(this.updateInfo.url, '_blank');
             }
         },
-        async getGmailAuthUrl() {
-            this.gmailOAuth.isGenerating = true;
-            try {
-                const res = await this.authFetch('/api/gmail/auth_url');
-                const data = await res.json();
-                if (data.status === 'success') {
-                    this.gmailOAuth.authUrl = data.url;
-                    this.showToast("授权链接已生成，请在浏览器中打开", "success");
-                } else {
-                    this.showToast(data.message, "error");
-                }
-            } catch (e) {
-                this.showToast("获取失败，请检查 credentials.json 是否已放置", "error");
-            } finally {
-                this.gmailOAuth.isGenerating = false;
-            }
-        },
-        async submitGmailAuthCode() {
-            this.gmailOAuth.isLoading = true;
-            try {
-                const res = await this.authFetch('/api/gmail/exchange_code', {
-                    method: 'POST',
-                    body: JSON.stringify({ code: this.gmailOAuth.pastedCode })
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                    this.showToast("🎉 永久授权成功！系统已自动关联该 Gmail", "success");
-                    this.gmailOAuth.authUrl = '';
-                    this.gmailOAuth.pastedCode = '';
-                } else {
-                    this.showToast(data.message, "error");
-                }
-            } catch (e) {
-                this.showToast("网络请求异常", "error");
-            } finally {
-                this.gmailOAuth.isLoading = false;
-            }
-        },
         async restartSystem() {
             const confirmed = await this.customConfirm("⚠️ 危险操作：\n\n确定要重启整个后端系统吗？\n如果当前有任务正在运行，将会被强制中断！");
             if (!confirmed) return;
@@ -1409,12 +1036,13 @@ createApp({
             return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
         },
         async exportSub2Api() {
-            if (this.selectedAccounts.length === 0) {
+            const eligibleAccounts = this.eligibleSelectedAccounts();
+            if (eligibleAccounts.length === 0) {
                 this.showToast('请先勾选账号', 'warning');
                 return;
             }
             try {
-                const emailsToExport = this.selectedAccounts.map(item =>
+                const emailsToExport = eligibleAccounts.map(item =>
                     typeof item === 'object' ? item.email : item
                 );
 
@@ -1596,7 +1224,7 @@ createApp({
         },
         toggleAllCloud(e) {
             if (e.target.checked) {
-                this.selectedCloud = this.cloudAccounts.map(a => ({ id: String(a.id), type: a.account_type }));
+                this.selectedCloud = this.filteredCloud.map(a => ({ id: String(a.id), type: a.account_type }));
             } else {
                 this.selectedCloud = [];
             }
@@ -1610,7 +1238,12 @@ createApp({
             this.showCloudDetailModal = true;
         },
         changeCloudPage(newPage) {
-            if (newPage < 1 || newPage > this.cloudTotalPages) return;
+            if (!newPage || isNaN(newPage)) newPage = 1;
+            newPage = Math.max(1, Math.min(newPage, this.cloudTotalPages));
+            if (this.cloudPage === newPage) {
+                this.$forceUpdate();
+                return;
+            }
             this.cloudPage = newPage;
             this.fetchCloudAccounts();
         },
@@ -1618,22 +1251,6 @@ createApp({
             this.cloudPage = 1;
             this.selectedCloud = [];
             this.fetchCloudAccounts();
-        },
-        async remoteControlNode(nodeName, action) {
-            try {
-                const res = await this.authFetch('/api/cluster/control', {
-                    method: 'POST',
-                    body: JSON.stringify({ node_name: nodeName, action: action })
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                    this.showToast(`✅ 指令 [${action}] 已成功发送至节点: ${nodeName}`, 'success');
-                } else {
-                    this.showToast(data.message, 'warning');
-                }
-            } catch (e) {
-                this.showToast('控制请求异常', 'error');
-            }
         },
         formatDuration(seconds) {
             if (!seconds || seconds < 0) return "0s";
@@ -1646,11 +1263,6 @@ createApp({
             if (m > 0 || h > 0) res += m + "m ";
             res += s + "s";
             return res;
-        },
-        getOnlineDuration(joinTime) {
-            if (!joinTime) return '0s';
-            const diff = this.nowTimestamp - Math.floor(joinTime);
-            return this.formatDuration(diff);
         },
         maskValue(val, type = 'auto') {
             if (!val) return '未配置';
@@ -1665,230 +1277,6 @@ createApp({
                 } catch(e) { return val.substring(0, 8) + '...'; }
             }
             return val.length > 8 ? val.substring(0, 4) + '***' + val.slice(-4) : val.substring(0, 2) + '***';
-        },
-        initClusterWebSocket() {
-            if (this.clusterWs) {
-                this.clusterWs.close();
-            }
-
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const token = localStorage.getItem('auth_token');
-            const wsUrl = `${protocol}//${window.location.host}/api/cluster/view_ws?token=${token}`;
-
-            this.clusterWs = new WebSocket(wsUrl);
-
-            this.clusterWs.onmessage = (event) => {
-                const res = JSON.parse(event.data);
-                if (res.status === 'success') {
-                    this.clusterNodes = res.nodes;
-                }
-            };
-
-            this.clusterWs.onclose = () => {
-                setTimeout(() => {
-                    if (this.currentTab === 'cluster' && this.isLoggedIn) {
-                        this.initClusterWebSocket();
-                    }
-                }, 3000);
-            };
-        },
-        async dispatchExtensionTask() {
-            if (!this.isRunning) return;
-
-            try {
-                const res = await this.authFetch('/api/ext/generate_task');
-                const data = await res.json();
-                if (!this.isRunning) {
-                    this.showToast("任务已生成，但系统已停止，已丢弃该任务。", "warning");
-                    return;
-                }
-                const now = new Date();
-                const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
-
-                if (data.status !== 'success') {
-                    this.logs.push({ parsed: true, time: timeStr, level: '总控', text: `任务生成失败: ${data.message}`, raw: `[${timeStr}] [总控] 任务生成失败: ${data.message}` });
-                    return;
-                }
-
-                const task = data.task_data;
-                const taskId = "TASK_" + new Date().getTime();
-
-                this.logs.push({ parsed: true, time: timeStr, level: '总控', text: `📦 任务包裹已打包，目标邮箱:${task.email}，正在进行...`, raw: `[${timeStr}] [总控] 📦 任务包裹已打包，目标邮箱:${task.email}，正在进行...` });
-
-                this.$nextTick(() => {
-                    const container = document.getElementById('terminal-container');
-                    if (container) container.scrollTop = container.scrollHeight;
-                });
-
-                window.postMessage({
-                    type: "CMD_EXECUTE_TASK",
-                    payload: {
-                        taskId: taskId,
-                        apiUrl: window.location.origin,
-                        token: localStorage.getItem('auth_token'),
-                        email: task.email,
-                        email_jwt: task.email_jwt,
-                        password: task.password,
-                        firstName: task.firstName,
-                        lastName: task.lastName,
-                        birthday: task.birthday,
-                        registerUrl: task.registerUrl,
-                        code_verifier: task.code_verifier,
-                        expected_state: task.expected_state
-                    }
-                }, "*");
-
-            } catch (error) {
-                const now = new Date();
-                const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
-                this.logs.push({ parsed: true, time: timeStr, level: '总控', text: `下发任务异常: ${error.message}`, raw: `[${timeStr}] [总控] 下发任务异常: ${error.message}` });
-            }
-        },
-
-        syncTokenToExtension() {
-            let localWorkerId = localStorage.getItem('local_worker_id');
-            if (!localWorkerId) return; // 还没有 ID 则等待 Ready 信号生成
-
-            const payload = {
-                apiUrl: window.location.origin,
-                token: localStorage.getItem('auth_token'), // 💥 确保抓取登录后的最新 Token
-                workerId: localWorkerId
-            };
-
-            window.postMessage({ type: "CMD_INIT_NODE", payload: payload }, "*");
-            console.log(`📡 [总控] 身份同步指令已下发: ${localWorkerId}`);
-        },
-
-        listenToExtension() {
-            if (this.config?.reg_mode !== 'extension') return;
-            if (this._hasExtensionListener) {
-                this.syncTokenToExtension();
-                return;
-            }
-
-            this._hasExtensionListener = true;
-            this.isExtConnected = false;
-
-            window.addEventListener("message", async (event) => {
-                if (!event.data) return;
-
-                if (event.data.type === "WORKER_READY") {
-                    const now = new Date();
-                    const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
-
-                    if (this._extDetectionTimer) {
-                        clearInterval(this._extDetectionTimer);
-                        this._extDetectionTimer = null;
-                        console.log("🎯 [总控] 锁定插件频段，探测雷达已关闭。");
-                    }
-
-                    this.isExtConnected = true;
-
-                    let localWorkerId = localStorage.getItem('local_worker_id');
-                    if (!localWorkerId) {
-                        localWorkerId = 'Node-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-                        localStorage.setItem('local_worker_id', localWorkerId);
-                    }
-                    console.log(`[集群管控] 本机节点识别码: ${localWorkerId}`);
-
-                    this.logs.push({
-                        parsed: true, time: timeStr, level: '总控',
-                        text: '✅ 插件连接成功，正在同步身份凭证...',
-                        raw: `[${timeStr}] [总控] ✅ 插件连接成功，正在同步身份凭证...`
-                    });
-
-                    this.$nextTick(() => {
-                        const container = document.getElementById('terminal-container');
-                        if (container) container.scrollTop = container.scrollHeight;
-                    });
-
-                    this.syncTokenToExtension();
-                    return;
-                }
-
-                if (event.data.type === "WORKER_LOG_REPLY") {
-                    const now = new Date();
-                    const timeStr = now.toLocaleTimeString('zh-CN', { hour12: false });
-                    this.logs.push({
-                        parsed: true, time: timeStr, level: '节点',
-                        text: event.data.log, raw: `[${timeStr}] [节点] ${event.data.log}`
-                    });
-                    this.$nextTick(() => {
-                        const container = document.getElementById('terminal-container');
-                        if (container) container.scrollTop = container.scrollHeight;
-                    });
-                }
-
-                if (event.data.type === "WORKER_RESULT_REPLY") {
-                    const result = event.data.result;
-                    try {
-                        await this.authFetch('/api/ext/submit_result', {
-                            method: 'POST',
-                            body: JSON.stringify(result)
-                        });
-                    } catch (e) {
-                        console.error("统计上报失败", e);
-                    }
-
-                    if (result.status === 'success') {
-                        this.showToast(`🎉 收到节点捷报！注册成功！`, "success");
-                    } else {
-                        this.showToast(`❌ 节点汇报失败: ${result.error_msg}`, "error");
-                    }
-
-                    if (this.isRunning) {
-                        const targetCount = this.config?.normal_mode?.target_count || 0;
-                        if (targetCount > 0 && this.stats && this.stats.success >= targetCount) {
-                            this.showToast(`🎯 已达到目标产出数量 (${targetCount})，自动停止调度！`, "success");
-                            this.isRunning = false;
-                            window.postMessage({ type: "CMD_STOP_WORKER" }, "*");
-
-                            const timeStr = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-                            this.logs.push({
-                                parsed: true, time: timeStr, level: '总控',
-                                text: `🛑 目标产量已达成，总控引擎已自动挂起。`,
-                                raw: `[${timeStr}] [总控] 🛑 目标产量已达成，总控引擎已自动挂起。`
-                            });
-                            return;
-                        }
-                        this.showToast(`准备下发下一个插件任务...`, "info");
-                        this._extDispatchTimer = setTimeout(() => {
-                            this._extDispatchTimer = null;
-                            this.dispatchExtensionTask();
-                        }, 4000);
-                    }
-                }
-            });
-
-            if (this._extDetectionTimer) clearInterval(this._extDetectionTimer);
-            this._extDetectionTimer = setInterval(() => {
-                if (this.config?.reg_mode === 'extension' && !this.isExtConnected) {
-                    console.log("📡 [总控] 正在扫描空域...");
-                    window.postMessage({ type: "CHECK_EXTENSION_READY" }, "*");
-                } else if (this.config?.reg_mode !== 'extension') {
-                    clearInterval(this._extDetectionTimer);
-                    this._extDetectionTimer = null;
-                }
-            }, 2000);
-        },
-        async changeRegMode(mode) {
-            if (!this.config) return;
-            this.config.reg_mode = mode;
-
-            await this.saveConfig();
-            this.showToast(`模式已切换为: ${mode === 'protocol' ? '纯协议模式' : '插件托管模式'}`, 'info');
-
-            if (mode === 'extension') {
-                this.listenToExtension();
-            } else {
-                if (this._extDetectionTimer) {
-                    clearInterval(this._extDetectionTimer);
-                    this._extDetectionTimer = null;
-                }
-                this.isExtConnected = false;
-                window.postMessage({ type: "CMD_STOP_WORKER" }, "*");
-                console.log("🛑 [总控] 已进入协议模式，切断插件链路。");
-            }
         },
         async fetchMailboxes(isManual = false) {
             if (isManual) this.mailboxPage = 1;
@@ -1906,7 +1294,12 @@ createApp({
             }
         },
         changeMailboxPage(newPage) {
-            if (newPage < 1 || newPage > this.mailboxTotalPages) return;
+            if (!newPage || isNaN(newPage)) newPage = 1;
+            newPage = Math.max(1, Math.min(newPage, this.mailboxTotalPages));
+            if (this.mailboxPage === newPage) {
+                this.$forceUpdate();
+                return;
+            }
             this.mailboxPage = newPage;
             this.fetchMailboxes();
         },
@@ -1915,7 +1308,7 @@ createApp({
             this.fetchMailboxes();
         },
         toggleAllMailboxes(event) {
-            if (event.target.checked) this.selectedMailboxes = [...this.mailboxes];
+            if (event.target.checked) this.selectedMailboxes = [...this.filteredMailboxes];
             else this.selectedMailboxes = [];
         },
         async submitImportMailboxes() {
@@ -2026,21 +1419,6 @@ createApp({
                 this.outlookAuth.isLoading = false;
             }
         },
-        openFissionAuthModal() {
-            if (!this.config.local_microsoft.master_email) {
-                this.showToast("🚫 请先填写裂变主邮箱账号！", "warning");
-                return;
-            }
-
-            this.outlookAuth.mailbox = {
-                email: this.config.local_microsoft.master_email,
-                isFission: true
-            };
-            this.outlookAuth.currentClientId = this.config.local_microsoft.client_id || this.BUILTIN_CLIENT_ID;
-            this.outlookAuth.authUrl = '';
-            this.outlookAuth.pastedUrl = '';
-            this.outlookAuth.showModal = true;
-        },
         exportSelectedMailboxesToTxt() {
             if (this.selectedMailboxes.length === 0) {
                 this.showToast("请先勾选需要导出的邮箱", "warning");
@@ -2098,80 +1476,6 @@ createApp({
                 }
             } catch (e) {
                 this.showToast("请求异常", "error");
-            }
-        },
-        async fetchClashPool() {
-            this.clashPool.loading = true;
-            try {
-                const res = await this.authFetch('/api/clash/status');
-                const d = await res.json();
-                if (d.status === 'success') {
-                    this.clashPool.instances = d.data.instances;
-                    this.clashPool.groups = d.data.groups;
-                    if (this.clashPool.instances.length > 0) {
-                        this.clashPool.count = this.clashPool.instances.length;
-                    }
-                }
-            } catch (e) {}
-            this.clashPool.loading = false;
-        },
-        async handleClashDeploy() {
-            this.showToast('正在调整实例规模...', 'info');
-            try {
-                const res = await this.authFetch('/api/clash/deploy', {
-                    method: 'POST',
-                    body: JSON.stringify({ count: this.clashPool.count })
-                });
-                const d = await res.json();
-                this.showToast(d.message, d.status);
-                this.fetchClashPool();
-            } catch (e) { this.showToast('网络错误', 'error'); }
-        },
-        async handleClashUpdate() {
-            if (!this.clashPool.subUrl) return this.showToast('请输入订阅链接', 'error');
-            this.clashPool.loading = true;
-            try {
-                const res = await this.authFetch('/api/clash/update', {
-                    method: 'POST',
-                    body: JSON.stringify({ sub_url: this.clashPool.subUrl, target: this.clashPool.target })
-                });
-                const d = await res.json();
-                this.showToast(d.message, d.status);
-                this.fetchClashPool();
-            } catch (e) { this.showToast('网络错误', 'error'); }
-            this.clashPool.loading = false;
-        },
-        fillProxyGroup(name) {
-            if (this.config && this.config.clash_proxy_pool) {
-                this.config.clash_proxy_pool.group_name = name;
-                this.showToast(`已自动填入策略组：${name}`, 'success');
-            }
-        },
-        syncClusterToPool() {
-            if (!this.clashPool.instances || this.clashPool.instances.length === 0) {
-                this.showToast('当前没有运行中的实例', 'warning');
-                return;
-            }
-
-            const generatedList = this.clashPool.instances
-                .filter(ins => ins.status === 'running')
-                .map(ins => {
-                    const idx = ins.name.split('_')[1];
-                    return `http://127.0.0.1:${41000 + parseInt(idx)}`;
-                });
-
-            if (this.config && this.config.clash_proxy_pool) {
-                this.warpListStr = generatedList.join('\n');
-
-                this.config.clash_proxy_pool.pool_mode = true;
-                this.config.clash_proxy_pool.enable = true;
-
-                this.showToast(`✅ 已自动同步 ${generatedList.length} 个端口到独享池`, 'success');
-
-                this.$nextTick(() => {
-                    const el = document.getElementById('proxy-intelligence-pool');
-                    if (el) el.scrollIntoView({ behavior: 'smooth' });
-                });
             }
         },
         async exportAllAccounts() {
